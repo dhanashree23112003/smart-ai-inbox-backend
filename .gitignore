@@ -3,8 +3,9 @@ node_modules/
 __pycache__/
 *.pyc
 *.pyo
-token.pickle
 .env
 saved_models/
 *.pickle
-.DS_Store
+.DS_Store  
+credentials.json
+token.pickle
