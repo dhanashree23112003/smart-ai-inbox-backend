@@ -1,0 +1,10 @@
+venv/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+token.pickle
+.env
+saved_models/
+*.pickle
+.DS_Store
