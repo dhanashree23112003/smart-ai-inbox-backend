@@ -246,21 +246,6 @@ curl http://localhost:8000/ml-status
 
 ---
 
-## Interview questions I can answer
-
-**"How does your classifier work?"**
-Two models vote. XGBoost scores importance (0-100), Random Forest predicts priority class. If they agree, we're confident. If they disagree, XGBoost wins — unless the classifier confidence exceeds 80%, in which case the classifier overrides. Every decision is logged with its method.
-
-**"What's your model accuracy?"**
-72% on a held-out test set of real emails. My first version hit 91% — but it was overfit on 60 synthetic examples. After manually labeling 65 real emails and retraining, accuracy dropped to 72% on genuinely unseen data. That's the honest number.
-
-**"How would you scale this to a million users?"**
-Separate the sync pipeline into async workers (Celery + Redis). Move embeddings to a dedicated vector DB (Pinecone or Weaviate). Add read replicas for Supabase. Store encrypted refresh tokens so credentials survive restarts. Partition the emails table by user_id for query performance.
-
-**"How do you handle model drift?"**
-Currently I don't, and I'd say that honestly. The next step is collecting user corrections (wrong priority labels) and tracking prediction confidence over time. If average confidence drops, trigger retraining. That's the feedback loop I'd build next.
-
----
 
 <div align="center">
 
