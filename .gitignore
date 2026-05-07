@@ -9,3 +9,5 @@ saved_models/
 .DS_Store  
 credentials.json
 token.pickle
+*.pkl
+app/services/saved_models/
