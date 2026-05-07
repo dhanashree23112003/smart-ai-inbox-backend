@@ -11,7 +11,7 @@ from googleapiclient.discovery import build
 from sqlalchemy import text
 
 from app.config import FRONTEND_URL, BACKEND_URL
-from app.services.gmail_service import CREDENTIALS_PATH, SCOPES
+from app.services.gmail_service import SCOPES
 
 router = APIRouter()
 
@@ -28,8 +28,20 @@ def _db():
 
 
 def _make_flow() -> Flow:
-    return Flow.from_client_secrets_file(
-        CREDENTIALS_PATH,
+    client_config = {
+        "web": {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [
+                f"{BACKEND_URL}/auth/callback"
+            ],
+        }
+    }
+
+    return Flow.from_client_config(
+        client_config,
         scopes=SCOPES,
         redirect_uri=f"{BACKEND_URL}/auth/callback",
     )
