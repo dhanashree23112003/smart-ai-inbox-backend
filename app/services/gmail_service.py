@@ -5,50 +5,58 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# gmail.modify allows reading + trashing/modifying emails
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
-# Always resolve path safely
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")
 TOKEN_PATH = os.path.join(BASE_DIR, "token.pickle")
 
 
-def get_gmail_service():
-    creds = None
+def get_gmail_service(credentials=None):
+    """
+    Return a Gmail API service.
+    - If `credentials` are supplied (from the OAuth web flow session), use them directly.
+    - Otherwise try token.pickle (single-user dev mode, only if the file already exists).
+    - Never blocks the server waiting for a browser — raises ValueError if no creds available.
+    """
+    if credentials:
+        return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
+    # Fallback: token.pickle from a previous InstalledAppFlow run (dev only)
     if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, "rb") as token:
-            creds = pickle.load(token)
+        with open(TOKEN_PATH, "rb") as f:
+            creds = pickle.load(f)
+        if creds and creds.valid:
+            return build("gmail", "v1", credentials=creds, cache_discovery=False)
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(TOKEN_PATH, "wb") as f:
+                pickle.dump(creds, f)
+            return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            CREDENTIALS_PATH, SCOPES
-        )
-        creds = flow.run_local_server(port=0)
+    raise ValueError("No Gmail credentials. Sign in via /auth/login first.")
 
-        with open(TOKEN_PATH, "wb") as token:
-            pickle.dump(creds, token)
 
-    service = build(
-        "gmail",
-        "v1",
-        credentials=creds,
-        cache_discovery=False
-    )
-
-    return service
-
-def fetch_recent_emails(max_results=5):
-    service = get_gmail_service()
+def fetch_recent_emails(max_results=50, credentials=None):
+    service = get_gmail_service(credentials=credentials)
 
     results = service.users().messages().list(
         userId="me",
-        maxResults=max_results
+        maxResults=max_results,
+        labelIds=["INBOX"]   # only inbox — excludes Sent, Drafts, Spam
     ).execute()
 
     messages = results.get("messages", [])
-
     emails = []
+
+    # Gmail category label IDs that mean "not primary inbox"
+    PROMO_LABELS = {
+        "CATEGORY_PROMOTIONS",
+        "CATEGORY_UPDATES",
+        "CATEGORY_SOCIAL",
+        "CATEGORY_FORUMS",
+    }
 
     for msg in messages:
         msg_data = service.users().messages().get(
@@ -57,23 +65,36 @@ def fetch_recent_emails(max_results=5):
         ).execute()
 
         headers = msg_data["payload"]["headers"]
-
         subject = ""
-        sender = ""
+        sender  = ""
+        has_unsubscribe = False
 
         for header in headers:
-            if header["name"] == "Subject":
+            name = header["name"]
+            if name == "Subject":
                 subject = header["value"]
-            if header["name"] == "From":
+            elif name == "From":
                 sender = header["value"]
+            elif name in ("List-Unsubscribe", "List-Unsubscribe-Post"):
+                has_unsubscribe = True
 
-        snippet = msg_data.get("snippet", "")
+        snippet    = msg_data.get("snippet", "")
+        label_ids  = set(msg_data.get("labelIds", []))
+        is_promo   = bool(label_ids & PROMO_LABELS)  # True if Gmail flagged as non-primary
 
         emails.append({
-            "id": msg["id"],
-            "subject": subject,
-            "sender": sender,
-            "snippet": snippet
+            "id":              msg["id"],
+            "subject":         subject,
+            "sender":          sender,
+            "snippet":         snippet,
+            "is_promo":        is_promo,
+            "has_unsubscribe": has_unsubscribe,
+            "gmail_labels":    list(label_ids),
         })
 
     return emails
+
+
+def trash_email_message(message_id: str):
+    service = get_gmail_service()
+    return service.users().messages().trash(userId="me", id=message_id).execute()
