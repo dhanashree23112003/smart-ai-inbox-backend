@@ -13,7 +13,7 @@ from app.services.ml_classifier import predict_priority_batch, load_classifier
 from app.services.deadline_extractor import extract_deadline as ner_extract_deadline
 from app.services.importance_scorer import score_importance, load_scorer, retrain_with_feedback
 from app.services.email_clustering import cluster_emails, get_cluster_summary_for_dashboard
-from app.services.gmail_service import fetch_recent_emails, get_gmail_service
+from app.services.gmail_service import fetch_recent_emails
 from app.routes.auth import router as auth_router, get_session
 
 load_classifier()
@@ -61,11 +61,18 @@ def ensure_schema():
         ("CREATE sessions table", """
             CREATE TABLE IF NOT EXISTS sessions (
                 token      TEXT PRIMARY KEY,
-                email      TEXT NOT NULL,
-                creds_b64  TEXT NOT NULL,
+                email      TEXT,
+                creds_b64  TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """),
+        # Migrate old table that may have been created with different column names
+        ("ADD email to sessions",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS email TEXT"),
+        ("ADD creds_b64 to sessions",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS creds_b64 TEXT"),
+        ("ADD created_at to sessions",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()"),
         ("ADD user_id to emails",
             "ALTER TABLE emails ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT ''"),
         ("ALTER user_id type to TEXT",
@@ -182,6 +189,7 @@ def gmail_sync(request: Request):
                     ON CONFLICT (gmail_message_id) DO UPDATE SET
                         user_id             = EXCLUDED.user_id,
                         deadline            = EXCLUDED.deadline,
+                        is_deleted          = FALSE,
                         -- Never overwrite a human correction with ML scores
                         importance_score    = CASE WHEN emails.importance_reason = 'User feedback'
                                                    THEN emails.importance_score
@@ -395,64 +403,6 @@ def get_clusters(request: Request):
             "silhouette_score": result["silhouette_score"], "total_emails": len(email_list)}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# /trash-low-priority
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/trash-low-priority")
-def trash_low_priority(request: Request):
-    user_id, creds = _require_user(request)
-    try:
-        service = get_gmail_service(credentials=creds)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Gmail connection failed: {str(e)}")
-
-    with engine.begin() as conn:
-        rows = conn.execute(text("""
-            SELECT gmail_message_id FROM emails
-            WHERE  user_id = :uid
-              AND  priority = 'LOW'
-              AND  (is_deleted = FALSE OR is_deleted IS NULL)
-              AND  gmail_message_id IS NOT NULL
-        """), {"uid": user_id}).fetchall()
-
-    trashed = 0
-    with engine.begin() as conn:
-        for row in rows:
-            gid = row[0]
-            try:
-                service.users().messages().trash(userId="me", id=gid).execute()
-                conn.execute(text(
-                    "UPDATE emails SET is_deleted = TRUE WHERE gmail_message_id = :id AND user_id = :uid"
-                ), {"id": gid, "uid": user_id})
-                trashed += 1
-            except Exception:
-                continue
-
-    return {"trashed": trashed, "message": f"Moved {trashed} emails to Gmail Trash"}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# /trash-email/{message_id}
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/trash-email/{message_id}")
-def trash_single_email(message_id: str, request: Request):
-    if not message_id or len(message_id) > 200:
-        raise HTTPException(status_code=400, detail="Invalid message_id")
-    user_id, creds = _require_user(request)
-    try:
-        service = get_gmail_service(credentials=creds)
-        service.users().messages().trash(userId="me", id=message_id).execute()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Gmail trash failed: {str(e)}")
-
-    with engine.begin() as conn:
-        conn.execute(text(
-            "UPDATE emails SET is_deleted = TRUE WHERE gmail_message_id = :id AND user_id = :uid"
-        ), {"id": message_id, "uid": user_id})
-
-    return {"trashed": 1, "message_id": message_id}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -550,6 +500,7 @@ def ml_status():
         },
         "pipeline": "Gmail → labels/headers → Embed → Score → Deadline → Cluster → Store",
     }
+
 
 @app.get("/health")
 def health():
