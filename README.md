@@ -1,3 +1,12 @@
+---
+title: Smart AI Inbox
+emoji: 📬
+colorFrom: purple
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 <div align="center">
 
 ```
