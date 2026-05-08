@@ -184,29 +184,41 @@ def train_scorer(data=None, save=True):
     X = np.array(X_list)
     y = np.array(y_list)
 
+    n = len(data)
+    small = n < 200  # small dataset needs simpler model to avoid overfitting
+
     try:
         from xgboost import XGBRegressor
         model = XGBRegressor(
-            n_estimators=300,
-            max_depth=4,           # shallow — prevents overfitting on small data
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.3,  # low — regularizes on 388 features
-            reg_lambda=5.0,        # L2 regularization
-            random_state=42,
-            verbosity=0,
+            n_estimators   = 100 if small else 300,
+            max_depth      = 2   if small else 4,
+            learning_rate  = 0.1 if small else 0.05,
+            subsample      = 0.8,
+            colsample_bytree = 0.1 if small else 0.3,  # very few cols on small data
+            reg_lambda     = 20.0 if small else 5.0,   # heavy L2 on small data
+            random_state   = 42,
+            verbosity      = 0,
         )
     except ImportError:
         from sklearn.ensemble import GradientBoostingRegressor
         model = GradientBoostingRegressor(
-            n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42
+            n_estimators=50 if small else 200,
+            max_depth=2 if small else 3,
+            learning_rate=0.1 if small else 0.05,
+            random_state=42
         )
 
     model.fit(X, y)
 
-    from sklearn.model_selection import cross_val_score
-    cv_scores = cross_val_score(model, X, y, cv=min(5, len(data) // 5), scoring="r2")
-    print(f"[Scorer v3] R² = {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
+    # Only cross-validate if enough data for meaningful splits
+    if n >= 25:
+        from sklearn.model_selection import cross_val_score
+        cv_n = min(3 if small else 5, n // 5)
+        cv_scores = cross_val_score(model, X, y, cv=max(2, cv_n), scoring="r2")
+        print(f"[Scorer v3] R² = {cv_scores.mean():.3f} ± {cv_scores.std():.3f}"
+              + (" (small dataset — upload emails.csv for better accuracy)" if small else ""))
+    else:
+        print(f"[Scorer v3] Trained on {n} examples (too few for CV — upload emails.csv)")
 
     if save:
         with open(SCORER_PATH, "wb") as f:

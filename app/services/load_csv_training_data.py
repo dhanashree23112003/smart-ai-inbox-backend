@@ -16,7 +16,8 @@ import csv
 import random
 from pathlib import Path
 
-CSV_PATH = Path(__file__).parent.parent.parent.parent / "emails.csv"
+# Looks for data/emails.csv relative to repo root (works both locally and in Docker /app)
+CSV_PATH = Path(__file__).parent.parent.parent / "data" / "emails.csv"
 
 
 # ── Heuristic labeler for ham emails (spam=0) ────────────────────────────────
